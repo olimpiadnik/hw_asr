@@ -25,17 +25,33 @@ class BaselineModel(nn.Module):
             nn.Linear(in_features=fc_hidden, out_features=n_class),
         )
 
-    def forward(self, data_object, **batch):
+    def forward(self, spec, spec_length, **batch):
         """
         Model forward method.
 
         Args:
-            data_object (Tensor): input vector.
+            spectogram and its length.
         Returns:
-            output (dict): output dict containing logits.
+            output (dict): output dict containing logits .
         """
-        return {"logits": self.net(data_object)}
+        output = self.net(spec.transpose(1, 2))
+        log_probs = nn.functional.log_softmax(output, dim = -1)
+        log_probs_length = self.transform_input_lengths(spec_length)
+        return {"log_probs": log_probs, "log_probs_length": log_probs_length}
 
+
+    def transform_input_lengths(self, input_lengths):
+        """
+        As the network may compress the Time dimension, we need to know
+        what are the new temporal lengths after compression.
+
+        Args:
+            input_lengths (Tensor): old input lengths
+        Returns:
+            output_lengths (Tensor): new temporal lengths
+        """
+        return input_lengths 
+    
     def __str__(self):
         """
         Model prints with the number of parameters.

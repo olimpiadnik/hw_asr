@@ -1,1 +1,5 @@
-from src.loss.example import ExampleLoss
+from src.loss.CTCloss import CTCloss
+
+__all__ = [
+    "CTCloss"
+]

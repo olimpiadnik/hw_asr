@@ -29,17 +29,23 @@ def main(config):
     else:
         device = config.inferencer.device
 
+    text_encoder = instantiate(config.text_encoder)
+
     # setup data_loader instances
     # batch_transforms should be put on device
     dataloaders, batch_transforms = get_dataloaders(config, device)
 
     # build model architecture, then print to console
-    model = instantiate(config.model).to(device)
+    model = instantiate(config.model, n_tokens=len(text_encoder)).to(device)
     print(model)
 
     # get metrics
-    metrics = instantiate(config.metrics)
-
+    metrics = {"inference": []}
+    for metric_config in config.metrics.get("inference", []):
+        # use text_encoder in metrics
+        metrics["inference"].append(
+            instantiate(metric_config, text_encoder=text_encoder)
+        )
     # save_path for model predictions
     save_path = ROOT_PATH / "data" / "saved" / config.inferencer.save_path
     save_path.mkdir(exist_ok=True, parents=True)
