@@ -4,6 +4,10 @@ from typing import List
 
 import torch
 from torch.utils.data import Dataset
+import torchaudio
+import numpy as np
+
+from src.text_encoder import CTCTextEncoder
 
 logger = logging.getLogger(__name__)
 
@@ -18,7 +22,15 @@ class BaseDataset(Dataset):
     """
 
     def __init__(
-        self, index, limit=None, shuffle_index=False, instance_transforms=None
+        self,
+        index,
+        limit=None, 
+        shuffle_index=False, 
+        instance_transforms=None,
+        text_encoder=None,
+        target_sr=16000,
+        max_audio_length=None,
+        max_text_length=None
     ):
         """
         Args:
@@ -35,10 +47,16 @@ class BaseDataset(Dataset):
         """
         self._assert_index_is_valid(index)
 
+        index = self._filter_records_from_dataset(index, max_audio_length, max_text_length)
+
         index = self._shuffle_and_limit_index(index, limit, shuffle_index)
+        if not shuffle_index:
+            index = self._sort_index(index)
         self._index: List[dict] = index
 
         self.instance_transforms = instance_transforms
+        self.text_encoder = text_encoder
+        self.target_sr = target_sr
 
     def __getitem__(self, ind):
         """
@@ -56,14 +74,29 @@ class BaseDataset(Dataset):
                 (a single dataset element).
         """
         data_dict = self._index[ind]
-        data_path = data_dict["path"]
-        data_object = self.load_object(data_path)
-        data_label = data_dict["label"]
+        audio_path = data_dict["path"]
+        audio = self.load_object(audio_path)
+        instance_data = {
+            "original_audio": audio,
+            "audio": audio,
+            "audio_path": audio_path,
+        }
 
-        instance_data = {"data_object": data_object, "labels": data_label}
-        instance_data = self.preprocess_data(instance_data)
+        if 'text' in data_dict:
+            text = data_dict['text']
+            text_encoded = self.text_encoder.encode(text)
 
+            instance_data['text'] = text
+            instance_data['text_encoded'] = text_encoded
+
+        instance_data = self.preprocess_data(instance_data, before_spectrogram=True)
+        spectrogram = self.get_spectrogram(audio)
+        instance_data["original_spectrogram"] = spectrogram
+        instance_data["spectrogram"] = spectrogram
+
+        instance_data = self.preprocess_data(instance_data, before_spectrogram=False)
         return instance_data
+
 
     def __len__(self):
         """
@@ -80,10 +113,27 @@ class BaseDataset(Dataset):
         Returns:
             data_object (Tensor):
         """
-        data_object = torch.load(path)
-        return data_object
+        audio_tensor, sr = torchaudio.load(path)
+        audio_tensor = audio_tensor[0:1, :]  # remove all channels but the first
+        target_sr = self.target_sr
+        if sr != target_sr:
+            audio_tensor = torchaudio.functional.resample(audio_tensor, sr, target_sr)
+        return audio_tensor
+    
+    def get_spectrogram(self, audio):
+        """
+        Special instance transform with a special key to
+        get spectrogram from audio.
 
-    def preprocess_data(self, instance_data):
+        Args:
+            audio (Tensor): original audio.
+        Returns:
+            spectrogram (Tensor): spectrogram for the audio.
+        """
+        return self.instance_transforms["get_spectrogram"](audio)
+
+
+    def preprocess_data(self, instance_data, before_spectrogram=True):
         """
         Preprocess data with instance transforms.
 
@@ -99,14 +149,23 @@ class BaseDataset(Dataset):
         """
         if self.instance_transforms is not None:
             for transform_name in self.instance_transforms.keys():
+                if transform_name == "get_spectrogram":
+                    continue  
+                elif transform_name == "audio" and before_spectrogram is False:
+                    continue  
+                elif transform_name == "spectrogram" and before_spectrogram is True:
+                    continue  
                 instance_data[transform_name] = self.instance_transforms[
                     transform_name
                 ](instance_data[transform_name])
         return instance_data
 
+
     @staticmethod
     def _filter_records_from_dataset(
         index: list,
+        max_audio_length,
+        max_text_length,
     ) -> list:
         """
         Filter some of the elements from the dataset depending on
@@ -124,8 +183,46 @@ class BaseDataset(Dataset):
                 the dataset that satisfied the condition. The dict has
                 required metadata information, such as label and object path.
         """
-        # Filter logic
-        pass
+        initial_size = len(index)
+        if max_audio_length is not None:
+            exceeds_audio_length = (
+                np.array([el["audio_len"] for el in index]) >= max_audio_length
+            )
+            _total = exceeds_audio_length.sum()
+            logger.info(
+                f"{_total} ({_total / initial_size:.1%}) records are longer then "
+                f"{max_audio_length} seconds. Excluding them."
+            )
+        else:
+            exceeds_audio_length = False
+
+        initial_size = len(index)
+        if max_text_length is not None:
+            exceeds_text_length = (
+                np.array(
+                    [len(CTCTextEncoder.normalize_text(el["text"])) for el in index]
+                )
+                >= max_text_length
+            )
+            _total = exceeds_text_length.sum()
+            logger.info(
+                f"{_total} ({_total / initial_size:.1%}) records are longer then "
+                f"{max_text_length} characters. Excluding them."
+            )
+        else:
+            exceeds_text_length = False
+
+        records_to_filter = exceeds_text_length | exceeds_audio_length
+
+        if records_to_filter is not False and records_to_filter.any():
+            _total = records_to_filter.sum()
+            index = [el for el, exclude in zip(index, records_to_filter) if not exclude]
+            logger.info(
+                f"Filtered {_total} ({_total / initial_size:.1%}) records  from dataset"
+            )
+
+        return index
+
 
     @staticmethod
     def _assert_index_is_valid(index):
