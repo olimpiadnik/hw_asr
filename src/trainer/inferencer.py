@@ -1,4 +1,5 @@
 import torch
+import json
 from tqdm.auto import tqdm
 
 from src.metrics.tracker import MetricTracker
@@ -20,10 +21,12 @@ class Inferencer(BaseTrainer):
         config,
         device,
         dataloaders,
+        text_encoder, 
         save_path,
         metrics=None,
         batch_transforms=None,
         skip_model_load=False,
+        use_beam_search = False,
     ):
         """
         Initialize the Inferencer.
@@ -58,6 +61,8 @@ class Inferencer(BaseTrainer):
 
         self.model = model
         self.batch_transforms = batch_transforms
+
+        self.text_encoder = text_encoder
 
         # define dataloaders
         self.evaluation_dataloaders = {k: v for k, v in dataloaders.items()}
@@ -126,29 +131,51 @@ class Inferencer(BaseTrainer):
             for met in self.metrics["inference"]:
                 metrics.update(met.name, met(**batch))
 
-        # Some saving logic. This is an example
-        # Use if you need to save predictions on disk
+        log_probs = batch["log_probs"].clone()
+        predictions = torch.argmax(log_probs.cpu(), dim=-1).numpy()
+        if self.use_beam_search and self.text_encoder.do_lm_decoding:
+            predictions = self.text_encoder.lm_decoder(log_probs)
 
-        batch_size = batch["logits"].shape[0]
-        current_id = batch_idx * batch_size
+        lengths = batch["log_probs_length"].clone().detach().numpy()
 
-        for i in range(batch_size):
-            # clone because of
-            # https://github.com/pytorch/pytorch/issues/1995
-            logits = batch["logits"][i].clone()
-            label = batch["labels"][i].clone()
-            pred_label = logits.argmax(dim=-1)
+        if "text" in batch:
+            text = batch["text"]
+        else:
+            text = [None] * len(batch)
 
-            output_id = current_id + i
+        for prediction, log_probs_matrix, length, target_text, audio_path in zip(
+            predictions, log_probs, lengths, text, batch["audio_path"]
+        ):
+            if self.use_beam_search and self.text_encoder.do_lm_decoding:
+                pred_text = " ".join(prediction[0].words)
+            elif self.use_beam_search:
+                pred_text = self.text_encoder.get_best_pred_with_beam_search(
+                    log_probs_matrix[:length, :], self.beam_size
+                )
+            else:
+                pred_text = self.text_encoder.ctc_decode(prediction[:length])
 
-            output = {
-                "pred_label": pred_label,
-                "label": label,
-            }
+            if "text" in batch:
+                output = {
+                    "predicted_text": pred_text,
+                    "actual_text": target_text[-1],
+                    "audio_path": audio_path,
+                }
+            else:
+                output = {
+                    "predicted_text": pred_text,
+                    "audio_path": audio_path,
+                }
 
             if self.save_path is not None:
                 # you can use safetensors or other lib here
-                torch.save(output, self.save_path / part / f"output_{output_id}.pth")
+                last_audio_part = audio_path.split("/")[-1]
+
+                with open(
+                    str(self.save_path / part / ("output_" + last_audio_part + ".pth")),
+                    "w",
+                ) as f:
+                    json.dump(output, f)
 
         return batch
 
