@@ -1,0 +1,6 @@
+_target_: src.model.DeepSpeech2
+n_feats: 128
+num_rnn_layers: 7
+conv_channels: 32
+rnn_hidden_dim: 512
+bidirectional_rnn: True

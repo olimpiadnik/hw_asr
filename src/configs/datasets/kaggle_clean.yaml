@@ -1,0 +1,36 @@
+train:
+  _target_: src.datasets.LibrispeechDataset
+  part: "train-clean"
+  data_dir:
+    _target_: pathlib.Path
+    _args_:
+      - "/kaggle/input/librispeech/train-clean-100/LibriSpeech"
+  index_dir:
+    _target_: pathlib.Path
+    _args_:
+      - "/kaggle/working/dla_hw1_asr/saved"
+  instance_transforms: ${transforms.instance_transforms.train}
+val:
+  _target_: src.datasets.LibrispeechDataset
+  part: "dev-clean"
+  data_dir:
+    _target_: pathlib.Path
+    _args_:
+      - "/kaggle/input/librispeech/train-clean-100/LibriSpeech"
+  index_dir:
+    _target_: pathlib.Path
+    _args_:
+      - "/kaggle/working/dla_hw1_asr/saved"
+  instance_transforms: ${transforms.instance_transforms.inference}
+test:
+  _target_: src.datasets.LibrispeechDataset
+  part: "test-clean"
+  data_dir:
+    _target_: pathlib.Path
+    _args_:
+      - "/kaggle/input/librispeech/train-clean-100/LibriSpeech"
+  index_dir:
+    _target_: pathlib.Path
+    _args_:
+      - "/kaggle/working/dla_hw1_asr/saved"
+  instance_transforms: ${transforms.instance_transforms.inference}

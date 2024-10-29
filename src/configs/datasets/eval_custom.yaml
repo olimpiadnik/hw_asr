@@ -1,0 +1,5 @@
+test:
+  _target_: src.datasets.CustomDirAudioDataset
+  audio_dir: /Users/epbugaev/Documents/hse_year_4/dla_hw1_asr/data/datasets/custom_data/audio
+  transcription_dir: data/datasets/custom_data/transcriptions
+  instance_transforms: ${transforms.instance_transforms.inference}

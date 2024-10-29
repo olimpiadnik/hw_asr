@@ -1,0 +1,29 @@
+train:
+  get_spectrogram: # special key for getting spectrogram
+    _target_: torchaudio.transforms.MelSpectrogram
+    sample_rate: 16000
+    normalized: True
+  spectrogram:
+    _target_: torchvision.transforms.v2.Compose
+    transforms:
+      - _target_: src.transforms.spec_augs.FrequencyMasking
+        freq_mask_param: 10
+        p: 0.15
+  audio: # name of the tensor on which we apply transform
+    _target_: torchvision.transforms.v2.Compose
+    transforms:
+      - _target_: src.transforms.wav_augs.Gain
+        sample_rate: ${transforms.instance_transforms.train.get_spectrogram.sample_rate}
+        p: 0.15
+      - _target_: src.transforms.wav_augs.ColoredNoise
+        sample_rate: ${transforms.instance_transforms.train.get_spectrogram.sample_rate}
+        p: 0.15
+      - _target_: src.transforms.wav_augs.PitchShift
+        sample_rate: ${transforms.instance_transforms.train.get_spectrogram.sample_rate}
+        p: 0.15
+
+inference:
+  get_spectrogram:
+    _target_: torchaudio.transforms.MelSpectrogram
+    sample_rate: 16000
+    normalized: True
